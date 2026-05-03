@@ -12,6 +12,7 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import re
 import shlex
 import shutil
 import subprocess
@@ -39,6 +40,203 @@ COMMON_PORT_GROUPS = {
     "windows": "135,137,138,139,445,3389,5985,5986",
     "top100": "7,9,13,21,22,23,25,26,37,53,79,80,81,88,106,110,111,113,119,135,139,143,144,179,199,389,427,443,444,445,465,513,514,515,543,544,548,554,587,631,646,873,990,993,995,1025,1026,1027,1028,1029,1110,1433,1720,1723,1755,1900,2000,2001,2049,2121,2717,3000,3128,3306,3389,3986,4899,5000,5009,5051,5060,5101,5190,5357,5432,5631,5666,5800,5900,6000,6001,6646,7070,8000,8008,8009,8080,8081,8443,8888,9100,9999,10000,32768,49152,49153,49154,49155,49156,49157",
 }
+DEFAULT_CVE_DATABASE = [
+    {
+        "cve_id": "CVE-2021-41773",
+        "products": ["apache httpd", "apache http server", "httpd"],
+        "cpe_keywords": ["apache:http_server"],
+        "service_names": ["http"],
+        "affected_versions": [{"operator": "==", "version": "2.4.49"}],
+        "risk": "high",
+        "cvss": 7.5,
+        "summary": "Apache HTTP Server 2.4.49 path traversal and file disclosure vulnerability.",
+        "recommendation": "Upgrade Apache HTTP Server to 2.4.51 or later and review path alias configuration.",
+        "references": ["https://nvd.nist.gov/vuln/detail/CVE-2021-41773"],
+    },
+    {
+        "cve_id": "CVE-2021-42013",
+        "products": ["apache httpd", "apache http server", "httpd"],
+        "cpe_keywords": ["apache:http_server"],
+        "service_names": ["http"],
+        "affected_versions": [{"operator": "==", "version": "2.4.50"}],
+        "risk": "critical",
+        "cvss": 9.8,
+        "summary": "Apache HTTP Server 2.4.50 path traversal and possible remote code execution vulnerability.",
+        "recommendation": "Upgrade Apache HTTP Server to 2.4.51 or later immediately.",
+        "references": ["https://nvd.nist.gov/vuln/detail/CVE-2021-42013"],
+    },
+    {
+        "cve_id": "CVE-2019-0211",
+        "products": ["apache httpd", "apache http server", "httpd"],
+        "cpe_keywords": ["apache:http_server"],
+        "service_names": ["http"],
+        "affected_versions": [{"operator": ">=", "version": "2.4.17"}, {"operator": "<=", "version": "2.4.38"}],
+        "risk": "high",
+        "cvss": 7.8,
+        "summary": "Apache HTTP Server privilege escalation vulnerability in affected 2.4.x releases.",
+        "recommendation": "Upgrade Apache HTTP Server to 2.4.39 or later.",
+        "references": ["https://nvd.nist.gov/vuln/detail/CVE-2019-0211"],
+    },
+    {
+        "cve_id": "CVE-2021-23017",
+        "products": ["nginx"],
+        "cpe_keywords": ["nginx:nginx"],
+        "service_names": ["http", "https"],
+        "affected_versions": [{"operator": ">=", "version": "0.6.18"}, {"operator": "<=", "version": "1.20.0"}],
+        "risk": "high",
+        "cvss": 7.7,
+        "summary": "Nginx resolver off-by-one heap write vulnerability when resolver is configured.",
+        "recommendation": "Upgrade Nginx to 1.20.1, 1.21.0, or later and review resolver configuration.",
+        "references": ["https://nvd.nist.gov/vuln/detail/CVE-2021-23017"],
+    },
+    {
+        "cve_id": "CVE-2019-19781",
+        "products": ["citrix adc", "citrix gateway", "netscaler"],
+        "cpe_keywords": ["citrix"],
+        "service_names": ["http", "https"],
+        "affected_versions": [{"operator": "*", "version": "*"}],
+        "risk": "critical",
+        "cvss": 9.8,
+        "summary": "Citrix ADC and Gateway path traversal vulnerability that can lead to arbitrary code execution.",
+        "recommendation": "Apply vendor mitigations and upgrade to a fixed Citrix ADC/Gateway release.",
+        "references": ["https://nvd.nist.gov/vuln/detail/CVE-2019-19781"],
+    },
+    {
+        "cve_id": "CVE-2018-13379",
+        "products": ["fortinet fortigate", "fortios", "fortinet"],
+        "cpe_keywords": ["fortinet:fortios"],
+        "service_names": ["http", "https"],
+        "affected_versions": [{"operator": "*", "version": "*"}],
+        "risk": "critical",
+        "cvss": 9.8,
+        "summary": "Fortinet FortiOS SSL VPN path traversal vulnerability exposing session files.",
+        "recommendation": "Upgrade FortiOS to a fixed release and rotate potentially exposed credentials.",
+        "references": ["https://nvd.nist.gov/vuln/detail/CVE-2018-13379"],
+    },
+    {
+        "cve_id": "CVE-2018-15473",
+        "products": ["openssh"],
+        "cpe_keywords": ["openbsd:openssh"],
+        "service_names": ["ssh"],
+        "affected_versions": [{"operator": "<=", "version": "7.7"}],
+        "risk": "medium",
+        "cvss": 5.3,
+        "summary": "OpenSSH user enumeration vulnerability in affected releases.",
+        "recommendation": "Upgrade OpenSSH to 7.8 or later and restrict SSH exposure.",
+        "references": ["https://nvd.nist.gov/vuln/detail/CVE-2018-15473"],
+    },
+    {
+        "cve_id": "CVE-2023-38408",
+        "products": ["openssh"],
+        "cpe_keywords": ["openbsd:openssh"],
+        "service_names": ["ssh"],
+        "affected_versions": [{"operator": ">=", "version": "5.5"}, {"operator": "<=", "version": "9.3"}],
+        "risk": "high",
+        "cvss": 9.8,
+        "summary": "OpenSSH ssh-agent remote code execution risk through forwarded agents in specific conditions.",
+        "recommendation": "Upgrade OpenSSH to 9.3p2 or later and avoid agent forwarding to untrusted hosts.",
+        "references": ["https://nvd.nist.gov/vuln/detail/CVE-2023-38408"],
+    },
+    {
+        "cve_id": "CVE-2017-0144",
+        "products": ["microsoft windows smb", "samba", "smb"],
+        "cpe_keywords": ["microsoft:windows", "samba:samba"],
+        "service_names": ["microsoft-ds", "netbios-ssn", "smb"],
+        "allow_service_only": True,
+        "affected_versions": [{"operator": "*", "version": "*"}],
+        "risk": "critical",
+        "cvss": 8.1,
+        "summary": "SMBv1 remote code execution vulnerability widely associated with EternalBlue.",
+        "recommendation": "Apply MS17-010 patches, disable SMBv1, and restrict SMB access.",
+        "references": ["https://nvd.nist.gov/vuln/detail/CVE-2017-0144"],
+    },
+    {
+        "cve_id": "CVE-2020-0796",
+        "products": ["microsoft windows smb", "smb"],
+        "cpe_keywords": ["microsoft:windows"],
+        "service_names": ["microsoft-ds", "smb"],
+        "allow_service_only": True,
+        "affected_versions": [{"operator": "*", "version": "*"}],
+        "risk": "critical",
+        "cvss": 10.0,
+        "summary": "SMBv3 compression remote code execution vulnerability.",
+        "recommendation": "Apply Microsoft security updates and restrict SMB exposure.",
+        "references": ["https://nvd.nist.gov/vuln/detail/CVE-2020-0796"],
+    },
+    {
+        "cve_id": "CVE-2010-2075",
+        "products": ["proftpd"],
+        "cpe_keywords": ["proftpd"],
+        "service_names": ["ftp"],
+        "affected_versions": [{"operator": "<=", "version": "1.3.3"}],
+        "risk": "medium",
+        "cvss": 5.0,
+        "summary": "ProFTPD affected releases can disclose information through malformed commands.",
+        "recommendation": "Upgrade ProFTPD to a maintained release and restrict FTP access.",
+        "references": ["https://nvd.nist.gov/vuln/detail/CVE-2010-2075"],
+    },
+    {
+        "cve_id": "CVE-2015-3306",
+        "products": ["proftpd"],
+        "cpe_keywords": ["proftpd"],
+        "service_names": ["ftp"],
+        "affected_versions": [{"operator": "==", "version": "1.3.5"}],
+        "risk": "high",
+        "cvss": 10.0,
+        "summary": "ProFTPD mod_copy command execution vulnerability in vulnerable configurations.",
+        "recommendation": "Upgrade ProFTPD and disable vulnerable modules if not required.",
+        "references": ["https://nvd.nist.gov/vuln/detail/CVE-2015-3306"],
+    },
+    {
+        "cve_id": "CVE-2012-2122",
+        "products": ["mysql", "mariadb"],
+        "cpe_keywords": ["mysql:mysql", "mariadb"],
+        "service_names": ["mysql"],
+        "affected_versions": [{"operator": ">=", "version": "5.1.0"}, {"operator": "<=", "version": "5.5.23"}],
+        "risk": "high",
+        "cvss": 7.5,
+        "summary": "MySQL and MariaDB authentication bypass vulnerability in affected builds.",
+        "recommendation": "Upgrade database packages and restrict MySQL to trusted hosts.",
+        "references": ["https://nvd.nist.gov/vuln/detail/CVE-2012-2122"],
+    },
+    {
+        "cve_id": "CVE-2019-0708",
+        "products": ["microsoft terminal services", "rdp", "remote desktop"],
+        "cpe_keywords": ["microsoft:windows"],
+        "service_names": ["ms-wbt-server", "rdp"],
+        "allow_service_only": True,
+        "affected_versions": [{"operator": "*", "version": "*"}],
+        "risk": "critical",
+        "cvss": 9.8,
+        "summary": "Remote Desktop Services remote code execution vulnerability known as BlueKeep.",
+        "recommendation": "Apply Microsoft security updates, enable NLA, and restrict RDP access.",
+        "references": ["https://nvd.nist.gov/vuln/detail/CVE-2019-0708"],
+    },
+    {
+        "cve_id": "CVE-2017-5638",
+        "products": ["apache struts", "struts"],
+        "cpe_keywords": ["apache:struts"],
+        "service_names": ["http", "https"],
+        "affected_versions": [{"operator": ">=", "version": "2.3.5"}, {"operator": "<=", "version": "2.3.31"}],
+        "risk": "critical",
+        "cvss": 10.0,
+        "summary": "Apache Struts Jakarta multipart parser remote code execution vulnerability.",
+        "recommendation": "Upgrade Apache Struts to a fixed version and review exposed applications.",
+        "references": ["https://nvd.nist.gov/vuln/detail/CVE-2017-5638"],
+    },
+    {
+        "cve_id": "CVE-2021-44228",
+        "products": ["log4j"],
+        "cpe_keywords": ["apache:log4j"],
+        "service_names": ["http", "https"],
+        "affected_versions": [{"operator": ">=", "version": "2.0"}, {"operator": "<=", "version": "2.14.1"}],
+        "risk": "critical",
+        "cvss": 10.0,
+        "summary": "Apache Log4j remote code execution vulnerability known as Log4Shell.",
+        "recommendation": "Upgrade Log4j to a fixed release and search applications for bundled vulnerable libraries.",
+        "references": ["https://nvd.nist.gov/vuln/detail/CVE-2021-44228"],
+    },
+]
 
 
 @dataclass
@@ -66,6 +264,22 @@ class Finding:
 
 
 @dataclass
+class CVEMatch:
+    cve_id: str
+    risk: str
+    cvss: float
+    summary: str
+    affected: str
+    recommendation: str
+    references: list[str] = field(default_factory=list)
+    port: int | None = None
+    service: str | None = None
+    product: str = ""
+    installed_version: str = ""
+    match_reason: str = ""
+
+
+@dataclass
 class ScanResult:
     target: str
     profile: str = "default"
@@ -73,6 +287,7 @@ class ScanResult:
     scanned_at: str = ""
     services: list[Service] = field(default_factory=list)
     findings: list[Finding] = field(default_factory=list)
+    cve_matches: list[CVEMatch] = field(default_factory=list)
 
 
 def ensure_nmap_available(nmap_path: str = "nmap") -> None:
@@ -196,6 +411,262 @@ def parse_script_output(port_node: ET.Element) -> dict[str, str]:
         script_id = script_node.get("id", "unknown")
         scripts[script_id] = script_node.get("output", "")
     return scripts
+
+
+def normalize_text(value: str) -> str:
+    """Normalize text for matching service, product, and CPE data."""
+    return re.sub(r"[^a-z0-9_.:+-]+", " ", value.lower()).strip()
+
+
+def extract_version_parts(version: str) -> tuple[int, ...]:
+    """Extract comparable numeric version parts from a version string."""
+    parts = re.findall(r"\d+", version)
+    return tuple(int(part) for part in parts)
+
+
+def compare_versions(installed: str, expected: str) -> int | None:
+    """Compare two dotted versions. Return -1, 0, 1, or None if not comparable."""
+    installed_parts = extract_version_parts(installed)
+    expected_parts = extract_version_parts(expected)
+    if not installed_parts or not expected_parts:
+        return None
+
+    length = max(len(installed_parts), len(expected_parts))
+    left = installed_parts + (0,) * (length - len(installed_parts))
+    right = expected_parts + (0,) * (length - len(expected_parts))
+
+    if left < right:
+        return -1
+    if left > right:
+        return 1
+    return 0
+
+
+def version_condition_matches(installed_version: str, condition: dict[str, str]) -> bool:
+    """Check if a detected version satisfies one affected-version condition."""
+    operator = condition.get("operator", "")
+    expected_version = condition.get("version", "")
+
+    if operator == "*":
+        return True
+
+    comparison = compare_versions(installed_version, expected_version)
+    if comparison is None:
+        return False
+
+    return {
+        "==": comparison == 0,
+        "<": comparison < 0,
+        "<=": comparison <= 0,
+        ">": comparison > 0,
+        ">=": comparison >= 0,
+    }.get(operator, False)
+
+
+def affected_version_matches(installed_version: str, conditions: list[dict[str, str]]) -> bool:
+    """Return true if all affected-version conditions match the installed version."""
+    if not conditions:
+        return False
+    if any(condition.get("operator") == "*" for condition in conditions):
+        return True
+    if not installed_version:
+        return False
+    return all(version_condition_matches(installed_version, condition) for condition in conditions)
+
+
+def cve_entry_matches_service(service: Service, cve_entry: dict[str, object]) -> tuple[bool, str]:
+    """Check whether one CVE catalog entry applies to a discovered service."""
+    product_text = normalize_text(f"{service.product} {service.name} {service.extra_info}")
+    cpe_text = normalize_text(service.cpe)
+    service_name = normalize_text(service.name)
+
+    product_matched = any(
+        normalize_text(str(product)) in product_text
+        for product in cve_entry.get("products", [])
+    )
+    cpe_matched = any(
+        normalize_text(str(keyword)) in cpe_text
+        for keyword in cve_entry.get("cpe_keywords", [])
+    )
+    service_matched = service_name in {
+        normalize_text(str(name)) for name in cve_entry.get("service_names", [])
+    }
+
+    service_only_allowed = bool(cve_entry.get("allow_service_only", False))
+    evidence_matched = product_matched or cpe_matched or (service_matched and service_only_allowed)
+
+    if not evidence_matched:
+        return False, ""
+
+    conditions = cve_entry.get("affected_versions", [])
+    if not isinstance(conditions, list) or not affected_version_matches(service.version, conditions):
+        return False, ""
+
+    reasons = []
+    if product_matched:
+        reasons.append("product")
+    if cpe_matched:
+        reasons.append("cpe")
+    if service_matched and service_only_allowed:
+        reasons.append("service")
+    reasons.append("version")
+    return True, "+".join(reasons)
+
+
+def load_cve_database(database_path: Path | None = None) -> list[dict[str, object]]:
+    """Load a CVE database from JSON or return the bundled offline catalog."""
+    if database_path is None:
+        return DEFAULT_CVE_DATABASE
+
+    raw_data = json.loads(database_path.read_text(encoding="utf-8"))
+    if not isinstance(raw_data, list):
+        raise ValueError("CVE database must be a JSON array of CVE entries.")
+    return raw_data
+
+
+def correlate_cves(
+    services: Iterable[Service],
+    cve_database: list[dict[str, object]],
+    minimum_risk: str = "info",
+) -> list[CVEMatch]:
+    """Correlate discovered services with known CVE entries."""
+    matches: list[CVEMatch] = []
+    seen: set[tuple[str, int | None, str]] = set()
+
+    for service in services:
+        for cve_entry in cve_database:
+            matched, reason = cve_entry_matches_service(service, cve_entry)
+            if not matched:
+                continue
+
+            risk = str(cve_entry.get("risk", "info")).lower()
+            if RISK_ORDER.get(risk, 0) < RISK_ORDER[minimum_risk]:
+                continue
+
+            cve_id = str(cve_entry.get("cve_id", "UNKNOWN-CVE"))
+            dedupe_key = (cve_id, service.port, service.name)
+            if dedupe_key in seen:
+                continue
+            seen.add(dedupe_key)
+
+            matches.append(
+                CVEMatch(
+                    cve_id=cve_id,
+                    risk=risk,
+                    cvss=float(cve_entry.get("cvss", 0.0)),
+                    summary=str(cve_entry.get("summary", "")),
+                    affected=describe_affected_versions(cve_entry),
+                    recommendation=str(cve_entry.get("recommendation", "")),
+                    references=[str(ref) for ref in cve_entry.get("references", [])],
+                    port=service.port,
+                    service=service.name,
+                    product=service.product,
+                    installed_version=service.version,
+                    match_reason=reason,
+                )
+            )
+
+    return sorted(matches, key=lambda item: (RISK_ORDER[item.risk], item.cvss), reverse=True)
+
+
+def describe_affected_versions(cve_entry: dict[str, object]) -> str:
+    """Render affected version rules for reports."""
+    conditions = cve_entry.get("affected_versions", [])
+    if not isinstance(conditions, list):
+        return "unknown"
+    rendered = []
+    for condition in conditions:
+        if not isinstance(condition, dict):
+            continue
+        operator = condition.get("operator", "")
+        version = condition.get("version", "")
+        rendered.append("all versions" if operator == "*" else f"{operator} {version}")
+    return " and ".join(rendered) if rendered else "unknown"
+
+
+def extract_cve_ids_from_scripts(service: Service) -> list[str]:
+    """Extract CVE identifiers reported by Nmap scripts."""
+    cve_ids: set[str] = set()
+    for output in service.scripts.values():
+        cve_ids.update(re.findall(r"CVE-\d{4}-\d{4,7}", output, flags=re.IGNORECASE))
+    return sorted(cve_id.upper() for cve_id in cve_ids)
+
+
+def correlate_script_cves(
+    services: Iterable[Service],
+    cve_database: list[dict[str, object]],
+    minimum_risk: str = "info",
+) -> list[CVEMatch]:
+    """Create CVE matches from CVE IDs already reported by Nmap script output."""
+    database_by_id = {str(entry.get("cve_id", "")).upper(): entry for entry in cve_database}
+    matches: list[CVEMatch] = []
+    seen: set[tuple[str, int | None, str]] = set()
+
+    for service in services:
+        for cve_id in extract_cve_ids_from_scripts(service):
+            entry = database_by_id.get(cve_id, {})
+            risk = str(entry.get("risk", "high")).lower()
+            if RISK_ORDER.get(risk, 0) < RISK_ORDER[minimum_risk]:
+                continue
+
+            dedupe_key = (cve_id, service.port, service.name)
+            if dedupe_key in seen:
+                continue
+            seen.add(dedupe_key)
+
+            matches.append(
+                CVEMatch(
+                    cve_id=cve_id,
+                    risk=risk,
+                    cvss=float(entry.get("cvss", 0.0)),
+                    summary=str(entry.get("summary", "Nmap script output referenced this CVE.")),
+                    affected=describe_affected_versions(entry) if entry else "reported by Nmap script",
+                    recommendation=str(entry.get("recommendation", "Validate the Nmap script result and patch or mitigate the affected service.")),
+                    references=[str(ref) for ref in entry.get("references", [])],
+                    port=service.port,
+                    service=service.name,
+                    product=service.product,
+                    installed_version=service.version,
+                    match_reason="nmap-script",
+                )
+            )
+
+    return sorted(matches, key=lambda item: (RISK_ORDER[item.risk], item.cvss), reverse=True)
+
+
+def merge_cve_matches(*match_groups: Iterable[CVEMatch]) -> list[CVEMatch]:
+    """Merge and deduplicate CVE matches."""
+    merged: list[CVEMatch] = []
+    seen: set[tuple[str, int | None, str]] = set()
+    for matches in match_groups:
+        for match in matches:
+            key = (match.cve_id, match.port, match.service or "")
+            if key in seen:
+                continue
+            seen.add(key)
+            merged.append(match)
+    return sorted(merged, key=lambda item: (RISK_ORDER[item.risk], item.cvss), reverse=True)
+
+
+def cve_matches_to_findings(cve_matches: Iterable[CVEMatch]) -> list[Finding]:
+    """Represent correlated CVEs as normal findings for unified severity filtering and CSV output."""
+    findings: list[Finding] = []
+    for match in cve_matches:
+        findings.append(
+            Finding(
+                risk=match.risk,
+                title=f"{match.cve_id}: {match.summary}",
+                description=(
+                    f"Detected {match.product or match.service} {match.installed_version or ''} "
+                    f"matches affected versions: {match.affected}."
+                ).strip(),
+                recommendation=match.recommendation,
+                port=match.port,
+                service=match.service,
+                evidence=f"CVSS {match.cvss}; match={match.match_reason}",
+            )
+        )
+    return findings
 
 
 def identify_service_findings(service: Service) -> list[Finding]:
@@ -445,11 +916,22 @@ def perform_scan(
     nmap_path: str = "nmap",
     profile: str = "default",
     minimum_risk: str = "info",
+    cve_database: list[dict[str, object]] | None = None,
+    enable_cve_correlation: bool = True,
 ) -> ScanResult:
     """Execute Nmap, parse services, and produce vulnerability findings."""
     xml_text = run_nmap_scan(target, ports, scan_arguments, nmap_path)
     services = parse_services_from_nmap_xml(xml_text)
+    cve_matches: list[CVEMatch] = []
+    if enable_cve_correlation:
+        database = cve_database if cve_database is not None else load_cve_database()
+        cve_matches = merge_cve_matches(
+            correlate_cves(services, database, minimum_risk),
+            correlate_script_cves(services, database, minimum_risk),
+        )
     findings = identify_vulnerabilities(services, minimum_risk)
+    findings.extend(cve_matches_to_findings(cve_matches))
+    findings = sorted(findings, key=lambda item: RISK_ORDER[item.risk], reverse=True)
     return ScanResult(
         target=target,
         profile=profile,
@@ -457,6 +939,7 @@ def perform_scan(
         scanned_at=datetime.now(timezone.utc).isoformat(),
         services=services,
         findings=findings,
+        cve_matches=cve_matches,
     )
 
 
@@ -473,6 +956,7 @@ def render_text_report(result: ScanResult) -> str:
         "Summary",
         "-" * 7,
         f"Open services: {len(result.services)}",
+        f"Correlated CVEs: {len(result.cve_matches)}",
     ]
 
     risk_summary = summarize_findings(result.findings)
@@ -503,6 +987,26 @@ def render_text_report(result: ScanResult) -> str:
             if service.scripts:
                 lines.append(f"  Scripts: {', '.join(sorted(service.scripts))}")
 
+    lines.extend(["", "CVE Correlation", "-" * 15])
+
+    if not result.cve_matches:
+        lines.append("No CVE correlations identified from the bundled database or Nmap script output.")
+    else:
+        for match in result.cve_matches:
+            location = f" on {match.port}/{match.service}" if match.port else ""
+            references = ", ".join(match.references) if match.references else "No reference URL available"
+            lines.extend(
+                [
+                    f"- [{match.risk.upper()}] {match.cve_id}{location} (CVSS {match.cvss})",
+                    f"  Product/version: {match.product or match.service} {match.installed_version or 'unknown'}",
+                    f"  Affected: {match.affected}",
+                    f"  Summary: {match.summary}",
+                    f"  Recommendation: {match.recommendation}",
+                    f"  Match reason: {match.match_reason}",
+                    f"  References: {references}",
+                ]
+            )
+
     lines.extend(["", "Findings", "-" * 8])
 
     if not result.findings:
@@ -527,8 +1031,7 @@ def write_report(result: ScanResult, output_path: Path, output_format: str) -> N
     """Write a scan report to disk."""
     output_path.parent.mkdir(parents=True, exist_ok=True)
     if output_format == "json":
-        payload = asdict(result)
-        output_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        output_path.write_text(render_json_report(result), encoding="utf-8")
         return
     if output_format == "csv":
         output_path.write_text(render_csv_report(result), encoding="utf-8")
@@ -546,6 +1049,7 @@ def render_csv_report(result: ScanResult) -> str:
         output,
         fieldnames=[
             "target",
+            "type",
             "risk",
             "title",
             "port",
@@ -558,9 +1062,10 @@ def render_csv_report(result: ScanResult) -> str:
     writer.writeheader()
     for finding in result.findings:
         writer.writerow(
-            {
-                "target": result.target,
-                "risk": finding.risk,
+                {
+                    "target": result.target,
+                    "type": "cve" if finding.title.startswith("CVE-") else "finding",
+                    "risk": finding.risk,
                 "title": finding.title,
                 "port": finding.port or "",
                 "service": finding.service or "",
@@ -599,6 +1104,22 @@ def render_port_groups() -> str:
     lines = ["Available port groups", "=====================", ""]
     for name, ports in COMMON_PORT_GROUPS.items():
         lines.append(f"- {name}: {ports}")
+    return "\n".join(lines)
+
+
+def render_cve_database(cve_database: list[dict[str, object]]) -> str:
+    """Render bundled or custom CVE database entries."""
+    lines = ["CVE correlation database", "========================", ""]
+    for entry in cve_database:
+        products = ", ".join(str(product) for product in entry.get("products", []))
+        lines.extend(
+            [
+                f"- {entry.get('cve_id', 'UNKNOWN-CVE')} [{str(entry.get('risk', 'info')).upper()}] CVSS {entry.get('cvss', 0.0)}",
+                f"  Products: {products or 'unknown'}",
+                f"  Affected: {describe_affected_versions(entry)}",
+                f"  Summary: {entry.get('summary', '')}",
+            ]
+        )
     return "\n".join(lines)
 
 
@@ -662,6 +1183,16 @@ def add_scan_arguments(parser: argparse.ArgumentParser) -> None:
         help="Only show findings at or above this risk level.",
     )
     parser.add_argument(
+        "--cve-db",
+        type=Path,
+        help="Optional JSON CVE database to use instead of the bundled offline catalog.",
+    )
+    parser.add_argument(
+        "--no-cve",
+        action="store_true",
+        help="Disable automated CVE correlation and only show service-rule findings.",
+    )
+    parser.add_argument(
         "-o",
         "--output",
         type=Path,
@@ -691,10 +1222,17 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     inventory_parser = subparsers.add_parser("inventory", help="Scan a target and show service counts only.")
     add_scan_arguments(inventory_parser)
 
+    cves_parser = subparsers.add_parser("cves", help="List CVEs in the bundled or custom correlation database.")
+    cves_parser.add_argument(
+        "--cve-db",
+        type=Path,
+        help="Optional JSON CVE database to list instead of the bundled offline catalog.",
+    )
+
     subparsers.add_parser("profiles", help="List built-in scan profiles.")
     subparsers.add_parser("ports", help="List built-in port groups.")
 
-    if argv and argv[0] not in {"scan", "inventory", "profiles", "ports", "-h", "--help"}:
+    if argv and argv[0] not in {"scan", "inventory", "profiles", "ports", "cves", "-h", "--help"}:
         argv = ["scan", *argv]
     return parser.parse_args(argv)
 
@@ -708,6 +1246,7 @@ def run_scan_command(args: argparse.Namespace) -> ScanResult:
     )
     ports = resolve_ports(args.ports, args.port_group)
     profile = "custom" if args.nmap_args else ("deep" if args.aggressive else args.profile)
+    cve_database = load_cve_database(args.cve_db) if not args.no_cve else []
     return perform_scan(
         target=args.target,
         ports=ports,
@@ -715,6 +1254,8 @@ def run_scan_command(args: argparse.Namespace) -> ScanResult:
         nmap_path=args.nmap_path,
         profile=profile,
         minimum_risk=args.min_risk,
+        cve_database=cve_database,
+        enable_cve_correlation=not args.no_cve,
     )
 
 
@@ -738,9 +1279,17 @@ def main(argv: list[str] | None = None) -> int:
         print(render_port_groups())
         return 0
 
+    if args.command == "cves":
+        try:
+            print(render_cve_database(load_cve_database(args.cve_db)))
+        except (OSError, json.JSONDecodeError, ValueError) as exc:
+            print(f"Error: {exc}", file=sys.stderr)
+            return 1
+        return 0
+
     try:
         result = run_scan_command(args)
-    except (RuntimeError, ET.ParseError, ValueError) as exc:
+    except (RuntimeError, ET.ParseError, OSError, json.JSONDecodeError, ValueError) as exc:
         print(f"Error: {exc}", file=sys.stderr)
         return 1
 

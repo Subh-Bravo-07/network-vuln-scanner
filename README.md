@@ -1,20 +1,23 @@
-# CLI Network Vulnerability Scanner
+# CLI Network Vulnerability Scanner with Automated CVE Correlation
 
-A Python command-line network vulnerability scanner that integrates with Nmap for automated port scanning and service enumeration. It parses Nmap XML output, identifies open services, and applies basic vulnerability checks for exposed or risky services.
+A Python command-line network vulnerability scanner that integrates with Nmap for automated port scanning and service enumeration. It parses Nmap XML output, identifies open services, applies basic vulnerability checks, and automatically correlates detected products and versions with a bundled offline CVE database.
 
 > Use this tool only on systems you own or have explicit permission to test.
 
 ## Features
 
-- CLI-based target scanning
+- CLI-based target scanning with the `netvs` command
 - Nmap integration for port discovery and service/version enumeration
 - Built-in scan profiles for quick, safe, deep, and vulnerability-oriented scans
 - Named port groups for web, admin, database, Windows, and common top ports
+- Automated CVE correlation by product, service, CPE, and version
+- Nmap script CVE extraction from vulnerability scan output
+- CVSS, affected-version, remediation, and reference details in reports
 - Basic vulnerability identification for FTP, Telnet, HTTP, SMB, RDP, VNC, SNMP, NFS, databases, Memcached, and search database services
 - Text, JSON, and CSV report output
 - Severity filtering with `--min-risk`
+- Custom JSON CVE database support with `--cve-db`
 - Service inventory mode
-- Modular Python functions for future CVE mapping and exploit recommendation features
 - No third-party Python package required
 
 ## Requirements
@@ -51,7 +54,7 @@ netvs --help
 netvs scan --help
 ```
 
-Scan a target with default Nmap service detection:
+Scan a target with default Nmap service detection and CVE correlation:
 
 ```bash
 netvs 192.168.1.10
@@ -66,7 +69,7 @@ netvs scan 192.168.1.10
 Scan selected ports:
 
 ```bash
-netvs 192.168.1.10 -p 22,80,443
+netvs scan 192.168.1.10 -p 22,80,443
 ```
 
 Use a named port group:
@@ -97,34 +100,36 @@ List available profiles:
 netvs profiles
 ```
 
-Run aggressive Nmap detection:
+List bundled CVE correlation rules:
 
 ```bash
-netvs scanme.nmap.org --aggressive
+netvs cves
 ```
 
-Save a text report:
+Save reports:
 
 ```bash
-netvs 192.168.1.10 -o report.txt
-```
-
-Generate JSON output:
-
-```bash
-netvs 192.168.1.10 --format json -o report.json
-```
-
-Generate CSV output:
-
-```bash
+netvs scan 192.168.1.10 -o report.txt
+netvs scan 192.168.1.10 --format json -o report.json
 netvs scan 192.168.1.10 --format csv -o findings.csv
 ```
 
-Show only findings at or above a risk level:
+Show only findings and CVEs at or above a risk level:
 
 ```bash
 netvs scan 192.168.1.10 --min-risk medium
+```
+
+Use a custom CVE database:
+
+```bash
+netvs scan 192.168.1.10 --cve-db custom_cves.json
+```
+
+Disable CVE correlation and show only service-rule findings:
+
+```bash
+netvs scan 192.168.1.10 --no-cve
 ```
 
 Show service inventory only:
@@ -136,13 +141,7 @@ netvs inventory 192.168.1.10
 Pass custom Nmap arguments:
 
 ```bash
-netvs 192.168.1.10 --nmap-args "-sV --version-light"
-```
-
-You can still run the script directly during development:
-
-```bash
-python network_vuln_scanner.py 192.168.1.10
+netvs scan 192.168.1.10 --nmap-args "-sV --version-light"
 ```
 
 ## Example Output
@@ -158,21 +157,32 @@ Scanned at: 2026-05-03T05:55:00+00:00
 Summary
 -------
 Open services: 2
-Findings: info=2, low=1
+Correlated CVEs: 1
+Findings: info=2, low=1, high=1
 
 Open Services
 -------------
 - 22/tcp ssh [open] (OpenSSH 8.4)
-- 80/tcp http [open] (Apache httpd 2.4.54)
+- 80/tcp http [open] (Apache httpd 2.4.49 cpe:/a:apache:http_server:2.4.49)
+
+CVE Correlation
+---------------
+- [HIGH] CVE-2021-41773 on 80/http (CVSS 7.5)
+  Product/version: Apache httpd 2.4.49
+  Affected: == 2.4.49
+  Summary: Apache HTTP Server 2.4.49 path traversal and file disclosure vulnerability.
+  Recommendation: Upgrade Apache HTTP Server to 2.4.51 or later and review path alias configuration.
+  Match reason: product+cpe+version
+  References: https://nvd.nist.gov/vuln/detail/CVE-2021-41773
 
 Findings
 --------
+- [HIGH] CVE-2021-41773: Apache HTTP Server 2.4.49 path traversal and file disclosure vulnerability. on 80/http
+  Detected Apache httpd 2.4.49 matches affected versions: == 2.4.49.
+  Recommendation: Upgrade Apache HTTP Server to 2.4.51 or later and review path alias configuration.
 - [LOW] Unencrypted HTTP service detected on 80/http
   HTTP traffic can be intercepted or modified on the network.
   Recommendation: Enforce HTTPS, redirect HTTP to HTTPS, and enable HSTS.
-- [INFO] Service banner reveals version information on 22/ssh
-  Detected banner: OpenSSH 8.4.
-  Recommendation: Review whether detailed version disclosure is necessary.
 ```
 
 ## Project Structure
@@ -191,25 +201,47 @@ The scanner is intentionally modular:
 - `resolve_scan_arguments()` selects custom Nmap arguments or a built-in profile.
 - `resolve_ports()` maps manual ports or named port groups.
 - `run_nmap_scan()` executes Nmap and collects XML output.
-- `parse_services_from_nmap_xml()` extracts open services from Nmap results.
-- `parse_script_output()` captures Nmap script output for vulnerability-oriented profiles.
+- `parse_services_from_nmap_xml()` extracts open services, versions, CPEs, and Nmap script output.
+- `load_cve_database()` loads the bundled offline CVE database or a custom JSON database.
+- `correlate_cves()` maps discovered services to CVEs using product, CPE, service name, and affected-version rules.
+- `correlate_script_cves()` extracts CVE IDs reported directly by Nmap scripts.
+- `merge_cve_matches()` deduplicates CVEs from service/version matching and Nmap script output.
+- `cve_matches_to_findings()` converts CVE matches into report findings.
 - `identify_vulnerabilities()` applies service-based vulnerability rules.
 - `filter_findings_by_risk()` filters results by minimum severity.
-- `summarize_findings()` and `summarize_services()` generate report summaries.
-- `render_text_report()` builds human-readable CLI output.
+- `render_text_report()`, `render_json_report()`, and `render_csv_report()` build reports.
 - `write_report()` saves text, JSON, or CSV reports.
 
-This makes it straightforward to add future modules for:
+## Custom CVE Database Format
 
-- CVE mapping by service name and version
-- CVSS scoring
-- Exploit recommendation metadata
-- HTML report generation
-- Authenticated scanning profiles
+Custom CVE databases are JSON arrays:
 
-## Current Vulnerability Checks
+```json
+[
+  {
+    "cve_id": "CVE-2021-41773",
+    "products": ["apache httpd", "apache http server", "httpd"],
+    "cpe_keywords": ["apache:http_server"],
+    "service_names": ["http"],
+    "affected_versions": [
+      { "operator": "==", "version": "2.4.49" }
+    ],
+    "risk": "high",
+    "cvss": 7.5,
+    "summary": "Apache HTTP Server path traversal vulnerability.",
+    "recommendation": "Upgrade Apache HTTP Server to a fixed release.",
+    "references": ["https://nvd.nist.gov/vuln/detail/CVE-2021-41773"]
+  }
+]
+```
 
-The built-in checks are intentionally basic and rule-based:
+Supported version operators are `==`, `<`, `<=`, `>`, `>=`, and `*`.
+
+Set `"allow_service_only": true` only for protocol-level CVEs where a service name alone is enough evidence, such as selected SMB or RDP checks. Product-specific web CVEs should rely on product or CPE matching.
+
+## Current Checks
+
+The built-in checks include:
 
 - FTP exposure
 - Telnet exposure
@@ -226,11 +258,13 @@ The built-in checks are intentionally basic and rule-based:
 - Non-production version markers such as `beta`, `dev`, or `test`
 - Nmap script output that references possible vulnerabilities or CVEs
 - Service banner and version disclosure
+- Offline CVE correlation for common Apache, Nginx, OpenSSH, SMB, RDP, FTP, database, VPN, and web application technology vulnerabilities
 
-These checks are not a replacement for a full vulnerability management platform, but they provide a practical foundation for learning and extension.
+The bundled CVE database is intentionally compact for portfolio and learning use. For production-grade coverage, provide a larger custom CVE database generated from trusted feeds and validate results manually.
 
 ## Notes
 
 - Some Nmap scans may require administrator/root privileges depending on scan type and OS.
 - Network firewalls can affect scan results.
+- Automated CVE correlation depends on accurate service and version detection.
 - Always obtain permission before scanning a host or network.

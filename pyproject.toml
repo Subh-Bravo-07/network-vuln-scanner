@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "netvs"
 version = "1.0.0"
-description = "CLI Network Vulnerability Scanner powered by Nmap"
+description = "CLI Network Vulnerability Scanner powered by Nmap with automated CVE correlation"
 readme = "README.md"
 requires-python = ">=3.10"
 authors = [
