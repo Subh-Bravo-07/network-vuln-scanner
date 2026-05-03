@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "netvs"
+version = "1.0.0"
+description = "CLI Network Vulnerability Scanner powered by Nmap"
+readme = "README.md"
+requires-python = ">=3.10"
+authors = [
+  { name = "Project Hyper Portfolio" }
+]
+license = { text = "MIT" }
+keywords = ["cli", "nmap", "network", "security", "vulnerability-scanner"]
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3 :: Only",
+  "Environment :: Console",
+  "Topic :: Security",
+  "Topic :: System :: Networking",
+]
+
+[project.scripts]
+netvs = "network_vuln_scanner:main"
+
+[tool.setuptools]
+py-modules = ["network_vuln_scanner"]
