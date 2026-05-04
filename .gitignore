@@ -1,6 +1,37 @@
+# Python cache
 __pycache__/
 *.py[cod]
-*.egg-info/
+*$py.class
+
+# Virtual environments
 .venv/
 venv/
+env/
+ENV/
+
+# Build/package output
+build/
+dist/
+*.egg-info/
+
+# Test/coverage cache
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Local environment/config
+.env
+.env.*
+*.local
+
+# Scanner output/reports
 reports/
+*.log
+scan.xml
+*.scan.xml
+
+# OS/editor files
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
