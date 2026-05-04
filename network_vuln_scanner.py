@@ -36,6 +36,18 @@ CLI_COMMANDS = [
     ("ports", "List built-in port groups."),
     ("uninstall-help", "Show pip uninstall commands and Windows troubleshooting tips."),
 ]
+CLI_EXAMPLES = [
+    f"{CLI_COMMAND} scan 192.168.1.10 --profile quick",
+    f"{CLI_COMMAND} scan 192.168.1.10 -p 22,80,443",
+    f"{CLI_COMMAND} inventory 192.168.1.10",
+    f"{CLI_COMMAND} uninstall-help",
+]
+ANSI_RESET = "\033[0m"
+ANSI_BOLD = "\033[1m"
+ANSI_DIM = "\033[2m"
+ANSI_CYAN = "\033[36m"
+ANSI_GREEN = "\033[32m"
+ANSI_YELLOW = "\033[33m"
 RISK_ORDER = {"info": 0, "low": 1, "medium": 2, "high": 3, "critical": 4}
 SCAN_PROFILES = {
     "quick": "-T4 -F -sV --version-light",
@@ -1177,32 +1189,35 @@ def render_cli_help() -> str:
     """Render top-level CLI help with a compact boxed layout."""
     width = 116
     lines = [
-        CLI_COMMAND,
+        color_text(CLI_COMMAND, ANSI_BOLD + ANSI_CYAN),
         "",
-        f" Usage: {CLI_COMMAND} [OPTIONS] COMMAND [ARGS]...",
+        f" {color_text('Usage:', ANSI_BOLD)} {CLI_COMMAND} {color_text('[OPTIONS]', ANSI_YELLOW)} COMMAND [ARGS]...",
         "",
         f" {CLI_DESCRIPTION}",
         "",
     ]
-    lines.extend(render_help_panel("Options", [("--help", "Show this message and exit.")], width))
+    lines.extend(render_help_panel("Options", [("-h, --help", "Show this message and exit.")], width))
     lines.append("")
     lines.extend(render_help_panel("Commands", CLI_COMMANDS, width))
     lines.append("")
-    lines.append("Only scan systems you own or have explicit permission to test.")
+    lines.extend(render_examples_panel("Examples", CLI_EXAMPLES, width))
+    lines.append("")
+    lines.append(color_text("Only scan systems you own or have explicit permission to test.", ANSI_DIM))
     return "\n".join(lines)
 
 
 def render_help_panel(title: str, rows: list[tuple[str, str]], width: int) -> list[str]:
     """Render a simple Unicode box for CLI help sections."""
     title_text = f" {title} "
-    top = "╭─" + title_text + "─" * (width - len(title_text) - 2) + "╮"
-    bottom = "╰" + "─" * width + "╯"
+    top = color_text("╭─" + title_text + "─" * (width - len(title_text) - 2) + "╮", ANSI_CYAN)
+    bottom = color_text("╰" + "─" * width + "╯", ANSI_CYAN)
     body_width = width - 2
     name_width = max(len(name) for name, _ in rows) + 4
     panel = [top]
     for name, description in rows:
         wrapped = wrap_help_description(description, body_width - name_width)
-        panel.append(f"│ {name:<{name_width - 1}}{wrapped[0]:<{body_width - name_width}} │")
+        row = f"│ {name:<{name_width - 1}}{wrapped[0]:<{body_width - name_width}} │"
+        panel.append(color_help_row(row, name))
         for extra_line in wrapped[1:]:
             panel.append(f"│ {'':<{name_width - 1}}{extra_line:<{body_width - name_width}} │")
     panel.append(bottom)
@@ -1224,6 +1239,31 @@ def wrap_help_description(description: str, width: int) -> list[str]:
             current = f"{current} {word}"
     lines.append(current)
     return lines
+
+
+def render_examples_panel(title: str, examples: list[str], width: int) -> list[str]:
+    """Render example commands in a boxed CLI help section."""
+    title_text = f" {title} "
+    top = color_text("╭─" + title_text + "─" * (width - len(title_text) - 2) + "╮", ANSI_CYAN)
+    bottom = color_text("╰" + "─" * width + "╯", ANSI_CYAN)
+    body_width = width - 2
+    panel = [top]
+    for example in examples:
+        row = f"│ {example:<{body_width - 1}}│"
+        panel.append(row.replace(example, color_text(example, ANSI_GREEN), 1))
+    panel.append(bottom)
+    return panel
+
+
+def color_help_row(row: str, name: str) -> str:
+    """Color a help row without changing its visual padding."""
+    colored_name = color_text(name, ANSI_GREEN if not name.startswith("-") else ANSI_YELLOW)
+    return row.replace(name, colored_name, 1)
+
+
+def color_text(text: str, style: str) -> str:
+    """Wrap text in ANSI style codes."""
+    return f"{style}{text}{ANSI_RESET}"
 
 
 def print_cli_text(text: str) -> None:

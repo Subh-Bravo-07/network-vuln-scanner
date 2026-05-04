@@ -18,6 +18,7 @@ A Python command-line network vulnerability scanner that integrates with Nmap fo
 - Severity filtering with `--min-risk`
 - Custom JSON CVE database support with `--cve-db`
 - Service inventory mode
+- Colorized boxed top-level CLI help
 - No third-party Python package required
 
 ## Requirements
@@ -74,6 +75,40 @@ Show CLI help:
 ```bash
 netvs --help
 netvs scan --help
+```
+
+The top-level help uses a colorized boxed layout in supported terminals:
+
+```text
+netvs
+
+ Usage: netvs [OPTIONS] COMMAND [ARGS]...
+
+ Network vulnerability scanner powered by Nmap.
+
+╭─ Options ─────────────────────────────────────────────────────────╮
+│ -h, --help   Show this message and exit.                          │
+╰────────────────────────────────────────────────────────────────────╯
+
+╭─ Commands ────────────────────────────────────────────────────────╮
+│ scan             Scan a target and identify basic vulnerabilities. │
+│ inventory        Scan a target and show service counts only.       │
+│ cves             List CVEs in the bundled or custom correlation    │
+│                  database.                                         │
+│ profiles         List built-in scan profiles.                      │
+│ ports            List built-in port groups.                        │
+│ uninstall-help   Show pip uninstall commands and Windows           │
+│                  troubleshooting tips.                             │
+╰────────────────────────────────────────────────────────────────────╯
+
+╭─ Examples ────────────────────────────────────────────────────────╮
+│ netvs scan 192.168.1.10 --profile quick                           │
+│ netvs scan 192.168.1.10 -p 22,80,443                              │
+│ netvs inventory 192.168.1.10                                      │
+│ netvs uninstall-help                                              │
+╰────────────────────────────────────────────────────────────────────╯
+
+Only scan systems you own or have explicit permission to test.
 ```
 
 Scan a target with default Nmap service detection and CVE correlation:
