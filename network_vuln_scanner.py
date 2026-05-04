@@ -25,6 +25,17 @@ from pathlib import Path
 from typing import Iterable
 
 
+CLI_COMMAND = "netvs"
+PACKAGE_NAME = "netvs"
+CLI_DESCRIPTION = "Network vulnerability scanner powered by Nmap."
+CLI_COMMANDS = [
+    ("scan", "Scan a target and identify basic vulnerabilities."),
+    ("inventory", "Scan a target and show service counts only."),
+    ("cves", "List CVEs in the bundled or custom correlation database."),
+    ("profiles", "List built-in scan profiles."),
+    ("ports", "List built-in port groups."),
+    ("uninstall-help", "Show pip uninstall commands and Windows troubleshooting tips."),
+]
 RISK_ORDER = {"info": 0, "low": 1, "medium": 2, "high": 3, "critical": 4}
 SCAN_PROFILES = {
     "quick": "-T4 -F -sV --version-light",
@@ -1140,6 +1151,89 @@ def render_service_inventory(result: ScanResult) -> str:
     return "\n".join(lines)
 
 
+def render_uninstall_help() -> str:
+    """Render uninstall guidance without attempting to remove the CLI."""
+    return "\n".join(
+        [
+            "Uninstall Help",
+            "==============",
+            "",
+            "To uninstall the package, run:",
+            "",
+            f"  pip uninstall {PACKAGE_NAME}",
+            "",
+            f"Note: `{CLI_COMMAND}` is the command alias. `{PACKAGE_NAME}` is the pip package name.",
+            "",
+            "Windows troubleshooting:",
+            "",
+            f"  where.exe {CLI_COMMAND}",
+            f"  py -ver -m pip uninstall {PACKAGE_NAME}",
+            f"  C:\\Path\\To\\Python\\python.exe -m pip uninstall {PACKAGE_NAME}",
+        ]
+    )
+
+
+def render_cli_help() -> str:
+    """Render top-level CLI help with a compact boxed layout."""
+    width = 116
+    lines = [
+        CLI_COMMAND,
+        "",
+        f" Usage: {CLI_COMMAND} [OPTIONS] COMMAND [ARGS]...",
+        "",
+        f" {CLI_DESCRIPTION}",
+        "",
+    ]
+    lines.extend(render_help_panel("Options", [("--help", "Show this message and exit.")], width))
+    lines.append("")
+    lines.extend(render_help_panel("Commands", CLI_COMMANDS, width))
+    lines.append("")
+    lines.append("Only scan systems you own or have explicit permission to test.")
+    return "\n".join(lines)
+
+
+def render_help_panel(title: str, rows: list[tuple[str, str]], width: int) -> list[str]:
+    """Render a simple Unicode box for CLI help sections."""
+    title_text = f" {title} "
+    top = "╭─" + title_text + "─" * (width - len(title_text) - 2) + "╮"
+    bottom = "╰" + "─" * width + "╯"
+    body_width = width - 2
+    name_width = max(len(name) for name, _ in rows) + 4
+    panel = [top]
+    for name, description in rows:
+        wrapped = wrap_help_description(description, body_width - name_width)
+        panel.append(f"│ {name:<{name_width - 1}}{wrapped[0]:<{body_width - name_width}} │")
+        for extra_line in wrapped[1:]:
+            panel.append(f"│ {'':<{name_width - 1}}{extra_line:<{body_width - name_width}} │")
+    panel.append(bottom)
+    return panel
+
+
+def wrap_help_description(description: str, width: int) -> list[str]:
+    """Wrap help text at word boundaries for boxed help output."""
+    words = description.split()
+    if not words:
+        return [""]
+    lines: list[str] = []
+    current = words[0]
+    for word in words[1:]:
+        if len(current) + 1 + len(word) > width:
+            lines.append(current)
+            current = word
+        else:
+            current = f"{current} {word}"
+    lines.append(current)
+    return lines
+
+
+def print_cli_text(text: str) -> None:
+    """Print CLI text as UTF-8 when the stream supports reconfiguration."""
+    reconfigure = getattr(sys.stdout, "reconfigure", None)
+    if reconfigure:
+        reconfigure(encoding="utf-8")
+    print(text)
+
+
 def add_scan_arguments(parser: argparse.ArgumentParser) -> None:
     """Attach shared scan arguments to a parser."""
     parser.add_argument("target", help="Target host, IP, or CIDR range to scan.")
@@ -1210,29 +1304,51 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     if not argv:
         argv = ["--help"]
 
-    parser = argparse.ArgumentParser(
-        description="CLI network vulnerability scanner powered by Nmap.",
-        epilog="Only scan systems you own or have explicit permission to test.",
-    )
-    subparsers = parser.add_subparsers(dest="command")
+    if argv in (["-h"], ["--help"]):
+        print_cli_text(render_cli_help())
+        raise SystemExit(0)
 
-    scan_parser = subparsers.add_parser("scan", help="Scan a target and identify basic vulnerabilities.")
+    parser = argparse.ArgumentParser(
+        prog=CLI_COMMAND,
+        description=CLI_DESCRIPTION,
+    )
+    subparsers = parser.add_subparsers(dest="command", metavar="<command>", title="commands")
+
+    scan_parser = subparsers.add_parser(
+        "scan",
+        help=CLI_COMMANDS[0][1],
+        description=CLI_COMMANDS[0][1],
+    )
     add_scan_arguments(scan_parser)
 
-    inventory_parser = subparsers.add_parser("inventory", help="Scan a target and show service counts only.")
+    inventory_parser = subparsers.add_parser(
+        "inventory",
+        help=CLI_COMMANDS[1][1],
+        description=CLI_COMMANDS[1][1],
+    )
     add_scan_arguments(inventory_parser)
 
-    cves_parser = subparsers.add_parser("cves", help="List CVEs in the bundled or custom correlation database.")
+    cves_parser = subparsers.add_parser(
+        "cves",
+        help=CLI_COMMANDS[2][1],
+        description=CLI_COMMANDS[2][1],
+    )
     cves_parser.add_argument(
         "--cve-db",
         type=Path,
         help="Optional JSON CVE database to list instead of the bundled offline catalog.",
     )
 
-    subparsers.add_parser("profiles", help="List built-in scan profiles.")
-    subparsers.add_parser("ports", help="List built-in port groups.")
+    subparsers.add_parser("profiles", help=CLI_COMMANDS[3][1], description=CLI_COMMANDS[3][1])
+    subparsers.add_parser("ports", help=CLI_COMMANDS[4][1], description=CLI_COMMANDS[4][1])
+    subparsers.add_parser(
+        "uninstall-help",
+        help=CLI_COMMANDS[5][1],
+        description=CLI_COMMANDS[5][1],
+    )
 
-    if argv and argv[0] not in {"scan", "inventory", "profiles", "ports", "cves", "-h", "--help"}:
+    commands = {"scan", "inventory", "profiles", "ports", "cves", "uninstall-help", "-h", "--help"}
+    if argv and argv[0] not in commands:
         argv = ["scan", *argv]
     return parser.parse_args(argv)
 
@@ -1277,6 +1393,10 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "ports":
         print(render_port_groups())
+        return 0
+
+    if args.command == "uninstall-help":
+        print(render_uninstall_help())
         return 0
 
     if args.command == "cves":

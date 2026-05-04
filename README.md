@@ -45,6 +45,28 @@ Verify the CLI command:
 netvs --help
 ```
 
+Show uninstall instructions:
+
+```bash
+netvs uninstall-help
+```
+
+Uninstall the pip package:
+
+```bash
+pip uninstall netvs
+```
+
+`netvs` is the command alias you run in your terminal. `netvs` is also the pip package name to pass to `pip uninstall`.
+
+On Windows, if the command is still available after uninstalling or you need to find which Python installation owns it, run:
+
+```powershell
+where.exe netvs
+py -ver -m pip uninstall netvs
+C:\Path\To\Python\python.exe -m pip uninstall netvs
+```
+
 ## Usage
 
 Show CLI help:
