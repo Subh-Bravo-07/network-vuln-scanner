@@ -1,4 +1,4 @@
-# CLI Network Vulnerability Scanner with Automated CVE Correlation
+# CLI Network Vulnerability Scanner v1.1.5 with Automated CVE Correlation
 
 A Python command-line network vulnerability scanner that integrates with Nmap for automated port scanning and service enumeration. It parses Nmap XML output, identifies open services, applies basic vulnerability checks, and automatically correlates detected products and versions with a bundled offline CVE database.
 
@@ -13,6 +13,9 @@ A Python command-line network vulnerability scanner that integrates with Nmap fo
 - Automated CVE correlation by product, service, CPE, and version
 - Nmap script CVE extraction from vulnerability scan output
 - CVSS, affected-version, remediation, and reference details in reports
+- 1-10 target strength score, from Weakest to Strongest
+- Compact `--score-only` output and `--min-score` score gates for automation
+- Direct website URL targets such as `https://example.com`
 - Basic vulnerability identification for FTP, Telnet, HTTP, SMB, RDP, VNC, SNMP, NFS, databases, Memcached, and search database services
 - Text, JSON, and CSV report output
 - Severity filtering with `--min-risk`
@@ -103,6 +106,8 @@ netvs
 
 ╭─ Examples ────────────────────────────────────────────────────────╮
 │ netvs scan 192.168.1.10 --profile quick                           │
+│ netvs scan https://example.com                                     │
+│ netvs scan https://example.com --score-only                        │
 │ netvs scan 192.168.1.10 -p 22,80,443                              │
 │ netvs inventory 192.168.1.10                                      │
 │ netvs uninstall-help                                              │
@@ -128,6 +133,15 @@ Scan selected ports:
 ```bash
 netvs scan 192.168.1.10 -p 22,80,443
 ```
+
+Scan a direct website link:
+
+```bash
+netvs scan https://example.com
+netvs scan https://example.com:8443/admin
+```
+
+When a URL is supplied, the scanner passes the hostname to Nmap. HTTP and HTTPS URLs default to the built-in web port group unless you provide `--ports` or `--port-group`; URLs with an explicit port scan that port by default.
 
 Use a named port group:
 
@@ -177,6 +191,18 @@ Show only findings and CVEs at or above a risk level:
 netvs scan 192.168.1.10 --min-risk medium
 ```
 
+Show only the score summary:
+
+```bash
+netvs scan https://example.com --score-only
+```
+
+Fail automation when the target score is lower than a required minimum:
+
+```bash
+netvs scan https://example.com --min-score 7
+```
+
 Use a custom CVE database:
 
 ```bash
@@ -213,9 +239,11 @@ Scanned at: 2026-05-03T05:55:00+00:00
 
 Summary
 -------
+Score [1-10]: 7/10 (Strong; Weakest - Strongest)
 Open services: 2
 Correlated CVEs: 1
 Findings: info=2, low=1, high=1
+Score factors: open service penalty=0.3, finding penalty=2.9, risky port penalty=0, total penalty=3.2
 
 Open Services
 -------------
@@ -256,7 +284,10 @@ Findings
 The scanner is intentionally modular:
 
 - `resolve_scan_arguments()` selects custom Nmap arguments or a built-in profile.
+- `normalize_scan_target()` accepts direct website links and extracts the scan host.
 - `resolve_ports()` maps manual ports or named port groups.
+- `calculate_security_score()` converts exposure and finding severity into a 1-10 strength score.
+- `render_score_report()` builds compact score-only output for CLI automation.
 - `run_nmap_scan()` executes Nmap and collects XML output.
 - `parse_services_from_nmap_xml()` extracts open services, versions, CPEs, and Nmap script output.
 - `load_cve_database()` loads the bundled offline CVE database or a custom JSON database.
@@ -318,6 +349,40 @@ The built-in checks include:
 - Offline CVE correlation for common Apache, Nginx, OpenSSH, SMB, RDP, FTP, database, VPN, and web application technology vulnerabilities
 
 The bundled CVE database is intentionally compact for portfolio and learning use. For production-grade coverage, provide a larger custom CVE database generated from trusted feeds and validate results manually.
+
+## Currently Achieved Features
+
+- ~~CLI-based scanning with the `netvs` command~~
+- ~~Nmap-powered port scanning and service/version enumeration~~
+- ~~Built-in scan profiles: quick, default, safe, deep, and vuln~~
+- ~~Named port groups for web, admin, database, Windows, and top common ports~~
+- ~~Direct IP, host, CIDR, and website URL targets~~
+- ~~Automated offline CVE correlation~~
+- ~~Nmap script CVE extraction~~
+- ~~Basic vulnerability checks for common exposed services~~
+- ~~Text, JSON, and CSV report output~~
+- ~~Severity filtering with `--min-risk`~~
+- ~~Custom CVE database support with `--cve-db`~~
+- ~~Service inventory mode~~
+- ~~1-10 target strength score from Weakest to Strongest~~
+- ~~Compact `--score-only` output~~
+- ~~Score gates for automation with `--min-score`~~
+- ~~Colorized boxed top-level CLI help~~
+- ~~Uninstall guidance command~~
+
+## Upcoming Feature Additions
+
+- Export an HTML report with score summary, findings, services, and remediation steps.
+- Add a larger optional CVE feed import workflow.
+- Add scan history comparison to show new, removed, and changed services.
+- Add remediation priority sorting based on risk, CVSS, exposure, and service criticality.
+- Add safer presets for internet-facing website checks.
+- Add optional screenshots or HTTP metadata capture for web services.
+- Add richer tests around Nmap XML parsing and report rendering.
+
+## Final Goal
+
+Build `netvs` into a polished portfolio-grade vulnerability scanner that can take an IP, network range, hostname, or website link, run an authorized Nmap-backed assessment, correlate likely vulnerabilities, assign a clear 1-10 security strength score, and produce actionable reports that are useful for learning, demos, and small internal security reviews.
 
 ## Notes
 

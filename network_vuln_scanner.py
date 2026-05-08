@@ -23,10 +23,12 @@ from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterable
+from urllib.parse import urlparse
 
 
 CLI_COMMAND = "netvs"
 PACKAGE_NAME = "netvs"
+CLI_VERSION = "1.1.5"
 CLI_DESCRIPTION = "Network vulnerability scanner powered by Nmap."
 CLI_COMMANDS = [
     ("scan", "Scan a target and identify basic vulnerabilities."),
@@ -38,6 +40,8 @@ CLI_COMMANDS = [
 ]
 CLI_EXAMPLES = [
     f"{CLI_COMMAND} scan 192.168.1.10 --profile quick",
+    f"{CLI_COMMAND} scan https://example.com",
+    f"{CLI_COMMAND} scan https://example.com --score-only",
     f"{CLI_COMMAND} scan 192.168.1.10 -p 22,80,443",
     f"{CLI_COMMAND} inventory 192.168.1.10",
     f"{CLI_COMMAND} uninstall-help",
@@ -49,6 +53,7 @@ ANSI_CYAN = "\033[36m"
 ANSI_GREEN = "\033[32m"
 ANSI_YELLOW = "\033[33m"
 RISK_ORDER = {"info": 0, "low": 1, "medium": 2, "high": 3, "critical": 4}
+RISK_SCORE_PENALTIES = {"info": 0.1, "low": 0.6, "medium": 1.2, "high": 2.1, "critical": 3.0}
 SCAN_PROFILES = {
     "quick": "-T4 -F -sV --version-light",
     "default": "-sV",
@@ -305,9 +310,13 @@ class CVEMatch:
 @dataclass
 class ScanResult:
     target: str
+    input_target: str = ""
     profile: str = "default"
     scan_arguments: str = "-sV"
     scanned_at: str = ""
+    security_score: int = 10
+    score_label: str = "Strongest"
+    score_details: dict[str, float] = field(default_factory=dict)
     services: list[Service] = field(default_factory=list)
     findings: list[Finding] = field(default_factory=list)
     cve_matches: list[CVEMatch] = field(default_factory=list)
@@ -339,6 +348,36 @@ def build_nmap_command(
     return command
 
 
+def parse_target_url(target: str):
+    """Parse user input as a URL when it clearly contains a scheme."""
+    if not re.match(r"^[a-z][a-z0-9+.-]*://", target, flags=re.IGNORECASE):
+        return None
+    parsed = urlparse(target)
+    if not parsed.hostname:
+        raise ValueError(f"URL target must include a hostname: {target}")
+    return parsed
+
+
+def normalize_scan_target(target: str) -> str:
+    """Accept direct website URLs while passing only a host/IP/CIDR to Nmap."""
+    parsed = parse_target_url(target)
+    if parsed is None:
+        return target
+    return parsed.hostname
+
+
+def resolve_url_default_ports(target: str) -> str | None:
+    """Choose sensible web ports when the user scans a URL without explicit ports."""
+    parsed = parse_target_url(target)
+    if parsed is None:
+        return None
+    if parsed.port:
+        return str(parsed.port)
+    if parsed.scheme.lower() in {"http", "https"}:
+        return COMMON_PORT_GROUPS["web"]
+    return None
+
+
 def resolve_scan_arguments(profile: str, nmap_args: str | None, aggressive: bool) -> str:
     """Choose Nmap arguments from custom args, legacy aggressive flag, or a named profile."""
     if nmap_args is not None:
@@ -355,6 +394,11 @@ def resolve_ports(ports: str | None, port_group: str | None) -> str | None:
     if port_group:
         return COMMON_PORT_GROUPS[port_group]
     return None
+
+
+def resolve_scan_ports(ports: str | None, port_group: str | None, target: str) -> str | None:
+    """Resolve ports from explicit CLI input, a named group, or a URL target hint."""
+    return resolve_ports(ports, port_group) or resolve_url_default_ports(target)
 
 
 def run_nmap_scan(
@@ -932,6 +976,49 @@ def summarize_services(services: Iterable[Service]) -> dict[str, int]:
     return dict(sorted(summary.items()))
 
 
+def score_label(score: int) -> str:
+    """Map a 1-10 score to a human-readable strength label."""
+    if score <= 2:
+        return "Weakest"
+    if score <= 4:
+        return "Weak"
+    if score <= 6:
+        return "Moderate"
+    if score <= 8:
+        return "Strong"
+    return "Strongest"
+
+
+def calculate_security_score_details(
+    services: Iterable[Service],
+    findings: Iterable[Finding],
+) -> dict[str, float]:
+    """Calculate the score penalty components used in strength reports."""
+    service_list = list(services)
+    finding_list = list(findings)
+    service_penalty = min(len(service_list) * 0.15, 2.0)
+    finding_penalty = sum(RISK_SCORE_PENALTIES.get(finding.risk, 0) for finding in finding_list)
+
+    risky_ports = {21, 23, 139, 445, 3389, 5900, 5985, 5986, 11211, 9200, 9300}
+    exposed_risky_ports = {service.port for service in service_list if service.port in risky_ports}
+    risky_port_penalty = min(len(exposed_risky_ports) * 0.4, 1.5)
+    total_penalty = service_penalty + finding_penalty + risky_port_penalty
+
+    return {
+        "base_score": 10.0,
+        "open_service_penalty": round(service_penalty, 2),
+        "finding_penalty": round(finding_penalty, 2),
+        "risky_port_penalty": round(risky_port_penalty, 2),
+        "total_penalty": round(total_penalty, 2),
+    }
+
+
+def calculate_security_score(services: Iterable[Service], findings: Iterable[Finding]) -> int:
+    """Calculate a 1-10 target strength score from exposure and finding severity."""
+    score_details = calculate_security_score_details(services, findings)
+    return max(1, min(10, round(score_details["base_score"] - score_details["total_penalty"])))
+
+
 def perform_scan(
     target: str,
     ports: str | None,
@@ -941,6 +1028,7 @@ def perform_scan(
     minimum_risk: str = "info",
     cve_database: list[dict[str, object]] | None = None,
     enable_cve_correlation: bool = True,
+    input_target: str | None = None,
 ) -> ScanResult:
     """Execute Nmap, parse services, and produce vulnerability findings."""
     xml_text = run_nmap_scan(target, ports, scan_arguments, nmap_path)
@@ -955,11 +1043,17 @@ def perform_scan(
     findings = identify_vulnerabilities(services, minimum_risk)
     findings.extend(cve_matches_to_findings(cve_matches))
     findings = sorted(findings, key=lambda item: RISK_ORDER[item.risk], reverse=True)
+    score_details = calculate_security_score_details(services, findings)
+    security_score = max(1, min(10, round(score_details["base_score"] - score_details["total_penalty"])))
     return ScanResult(
         target=target,
+        input_target=input_target or target,
         profile=profile,
         scan_arguments=scan_arguments,
         scanned_at=datetime.now(timezone.utc).isoformat(),
+        security_score=security_score,
+        score_label=score_label(security_score),
+        score_details=score_details,
         services=services,
         findings=findings,
         cve_matches=cve_matches,
@@ -972,12 +1066,14 @@ def render_text_report(result: ScanResult) -> str:
         "Network Vulnerability Scanner Report",
         "=" * 38,
         f"Target: {result.target}",
+        f"Input target: {result.input_target}",
         f"Profile: {result.profile}",
         f"Nmap args: {result.scan_arguments}",
         f"Scanned at: {result.scanned_at or 'not recorded'}",
         "",
         "Summary",
         "-" * 7,
+        f"Score [1-10]: {result.security_score}/10 ({result.score_label}; Weakest - Strongest)",
         f"Open services: {len(result.services)}",
         f"Correlated CVEs: {len(result.cve_matches)}",
     ]
@@ -989,6 +1085,15 @@ def render_text_report(result: ScanResult) -> str:
         if any(risk_summary.values())
         else "Findings: 0"
     )
+    if result.score_details:
+        lines.append(
+            "Score factors: "
+            + ", ".join(
+                f"{name.replace('_', ' ')}={value:g}"
+                for name, value in result.score_details.items()
+                if name != "base_score"
+            )
+        )
 
     lines.extend([
         "",
@@ -1050,6 +1155,30 @@ def render_text_report(result: ScanResult) -> str:
     return "\n".join(lines)
 
 
+def render_score_report(result: ScanResult) -> str:
+    """Render only the score-oriented scan summary."""
+    risk_summary = summarize_findings(result.findings)
+    findings = ", ".join(f"{risk}={count}" for risk, count in risk_summary.items() if count) or "0"
+    details = ", ".join(
+        f"{name.replace('_', ' ')}={value:g}"
+        for name, value in result.score_details.items()
+        if name != "base_score"
+    )
+    lines = [
+        "Target Score",
+        "============",
+        f"Target: {result.target}",
+        f"Input target: {result.input_target}",
+        f"Score [1-10]: {result.security_score}/10 ({result.score_label}; Weakest - Strongest)",
+        f"Open services: {len(result.services)}",
+        f"Correlated CVEs: {len(result.cve_matches)}",
+        f"Findings: {findings}",
+    ]
+    if details:
+        lines.append(f"Score factors: {details}")
+    return "\n".join(lines)
+
+
 def write_report(result: ScanResult, output_path: Path, output_format: str) -> None:
     """Write a scan report to disk."""
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -1072,6 +1201,9 @@ def render_csv_report(result: ScanResult) -> str:
         output,
         fieldnames=[
             "target",
+            "input_target",
+            "security_score",
+            "score_label",
             "type",
             "risk",
             "title",
@@ -1087,6 +1219,9 @@ def render_csv_report(result: ScanResult) -> str:
         writer.writerow(
                 {
                     "target": result.target,
+                    "input_target": result.input_target,
+                    "security_score": result.security_score,
+                    "score_label": result.score_label,
                     "type": "cve" if finding.title.startswith("CVE-") else "finding",
                     "risk": finding.risk,
                 "title": finding.title,
@@ -1153,6 +1288,7 @@ def render_service_inventory(result: ScanResult) -> str:
         "Service Inventory",
         "=================",
         f"Target: {result.target}",
+        f"Score [1-10]: {result.security_score}/10 ({result.score_label}; Weakest - Strongest)",
         "",
     ]
     if not summary:
@@ -1276,7 +1412,7 @@ def print_cli_text(text: str) -> None:
 
 def add_scan_arguments(parser: argparse.ArgumentParser) -> None:
     """Attach shared scan arguments to a parser."""
-    parser.add_argument("target", help="Target host, IP, or CIDR range to scan.")
+    parser.add_argument("target", help="Target host, IP, CIDR range, or website URL to scan.")
     parser.add_argument(
         "-p",
         "--ports",
@@ -1338,6 +1474,18 @@ def add_scan_arguments(parser: argparse.ArgumentParser) -> None:
         default="text",
         help="Report format for stdout and saved output. Defaults to text.",
     )
+    parser.add_argument(
+        "--score-only",
+        action="store_true",
+        help="Print a compact target score summary instead of the full scan report.",
+    )
+    parser.add_argument(
+        "--min-score",
+        type=int,
+        choices=range(1, 11),
+        metavar="1-10",
+        help="Return exit code 2 if the final target score is below this threshold.",
+    )
 
 
 def parse_args(argv: list[str]) -> argparse.Namespace:
@@ -1352,6 +1500,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         prog=CLI_COMMAND,
         description=CLI_DESCRIPTION,
     )
+    parser.add_argument("--version", action="version", version=f"{CLI_COMMAND} {CLI_VERSION}")
     subparsers = parser.add_subparsers(dest="command", metavar="<command>", title="commands")
 
     scan_parser = subparsers.add_parser(
@@ -1387,7 +1536,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         description=CLI_COMMANDS[5][1],
     )
 
-    commands = {"scan", "inventory", "profiles", "ports", "cves", "uninstall-help", "-h", "--help"}
+    commands = {"scan", "inventory", "profiles", "ports", "cves", "uninstall-help", "-h", "--help", "--version"}
     if argv and argv[0] not in commands:
         argv = ["scan", *argv]
     return parser.parse_args(argv)
@@ -1395,16 +1544,17 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
 
 def run_scan_command(args: argparse.Namespace) -> ScanResult:
     """Run a scan from parsed CLI arguments."""
+    normalized_target = normalize_scan_target(args.target)
     scan_arguments = resolve_scan_arguments(
         profile=args.profile,
         nmap_args=args.nmap_args,
         aggressive=args.aggressive,
     )
-    ports = resolve_ports(args.ports, args.port_group)
+    ports = resolve_scan_ports(args.ports, args.port_group, args.target)
     profile = "custom" if args.nmap_args else ("deep" if args.aggressive else args.profile)
     cve_database = load_cve_database(args.cve_db) if not args.no_cve else []
     return perform_scan(
-        target=args.target,
+        target=normalized_target,
         ports=ports,
         scan_arguments=scan_arguments,
         nmap_path=args.nmap_path,
@@ -1412,16 +1562,33 @@ def run_scan_command(args: argparse.Namespace) -> ScanResult:
         minimum_risk=args.min_risk,
         cve_database=cve_database,
         enable_cve_correlation=not args.no_cve,
+        input_target=args.target,
     )
 
 
 def print_or_save_result(result: ScanResult, args: argparse.Namespace) -> None:
     """Print a report and optionally save it."""
-    print(render_report(result, args.format))
+    rendered = render_score_report(result) if args.score_only else render_report(result, args.format)
+    print(rendered)
 
     if args.output:
-        write_report(result, args.output, args.format)
+        if args.score_only:
+            args.output.parent.mkdir(parents=True, exist_ok=True)
+            args.output.write_text(rendered, encoding="utf-8")
+        else:
+            write_report(result, args.output, args.format)
         print(f"\nReport saved to: {args.output}")
+
+
+def score_exit_code(result: ScanResult, args: argparse.Namespace) -> int:
+    """Return a nonzero code when the caller requested a score gate."""
+    if args.min_score is not None and result.security_score < args.min_score:
+        print(
+            f"Score gate failed: {result.security_score}/10 is below required minimum {args.min_score}/10.",
+            file=sys.stderr,
+        )
+        return 2
+    return 0
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -1454,14 +1621,19 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     if args.command == "inventory":
-        print(render_service_inventory(result))
+        rendered = render_score_report(result) if args.score_only else render_service_inventory(result)
+        print(rendered)
         if args.output:
-            write_report(result, args.output, args.format)
+            if args.score_only:
+                args.output.parent.mkdir(parents=True, exist_ok=True)
+                args.output.write_text(rendered, encoding="utf-8")
+            else:
+                write_report(result, args.output, args.format)
             print(f"\nReport saved to: {args.output}")
     else:
         print_or_save_result(result, args)
 
-    return 0
+    return score_exit_code(result, args)
 
 
 if __name__ == "__main__":
