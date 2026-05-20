@@ -37,6 +37,13 @@ nmap --version
 
 ## Installation
 
+Clone the repository:
+
+```bash
+git clone https://github.com/Subh-Bravo-07/network-vuln-scanner.git
+cd network-vuln-scanner
+```
+
 Install the project locally so the `netvs` command is available from your terminal:
 
 ```bash
